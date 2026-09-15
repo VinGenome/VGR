@@ -1,27 +1,3 @@
-# create_concensus_genome
-Script to create concensus genome
-# VGR: Vietnamese Genome Reference Construction
-
-## Step 1: get_sequences.py
-Query accession from UCSC API
-[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
-[![Reference Genome](https://img.shields.io/badge/Reference-GRCh38%2Fhg38-green.svg)](https://www.ncbi.nlm.nih.gov/assembly/GCF_000001405.26/)
-[![Repository](https://img.shields.io/badge/GitHub-VinGenome%2FVGR-blue?logo=github)](https://github.com/VinGenome/VGR)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
-## Step 2: check_anchor.py
-Use data from ncbi to get which sequence is anchor or not
- 
-## Step 3: get_coord_onhg38.py
-Search position which is anchor on hg38 to extract major 
-**VGR (Vietnamese Genome Reference)** is a specialized bioinformatics pipeline designed to construct a population-specific consensus reference genome (tailored for the Vietnamese population) based on the **GRCh38 / hg38** human reference genome.
-
-## Step 4: extract_major.py 
-Extract major variants from major file and change name and pos to corresponding alt contig
----
-
-## Step 5: 
-Use bcftools consensus to replace the major variants in GRCh38 genome
 ## 📑 Table of Contents
 
 - [Overview](#overview)
