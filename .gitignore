@@ -127,3 +127,16 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Project Submission & Experiment Artifacts
+@eaDir/
+*.pdf
+*.zip
+REBUTTAL_MASTER_REPORT.md
+manuscript_text.txt
+rebuttal_submission_package/
+experiments/
+extracted_fig/
+*.tbi
+*.fai
+*.dict
