@@ -1,131 +1,120 @@
 # Vietnamese Genome Reference (VGR)
 
-A computational framework for constructing population-specific consensus human genome references with ALT-contig awareness.
+Pipeline to construct population-specific consensus reference genomes (GRCh38-based) with ALT-contig awareness.
 
-## Overview
+Standard human reference assemblies (such as GRCh38) carry alleles that may be minor or non-existent in specific populations, introducing reference allele bias during read alignment and variant calling. VGR incorporates high-frequency major alleles (allele frequency >= 50%) into GRCh38 across both canonical chromosomes (`chr1`–`chr22`, `chrX`, `chrY`, `chrM`) and alternate contigs (`chr*_alt`). Homologous primary chromosome coordinates are projected onto anchored ALT contigs to ensure compatibility with ALT-aware aligners (such as BWA-MEM using `bwa-postalt.js`).
 
-Standard human reference genomes (such as GRCh38) are composite assemblies derived primarily from individuals of non-Asian ancestry. Applying standard reference genomes directly to specific ethnic populations introduces reference allele bias, leading to reduced read alignment quality and variant calling discrepancies.
+---
 
-VGR addresses this by substituting reference alleles with population-prevalent major alleles across:
-1. Primary canonical chromosomes (`chr1`–`chr22`, `chrX`, `chrY`, `chrM`).
-2. Alternate contigs (ALT contigs, `chr*_alt`), by projecting homologous primary chromosome coordinates onto anchored ALT contig regions.
-
-## Workflow
-
-```mermaid
-flowchart TD
-    COHORT["Population Cohort VCF"] --> S0["generate_major_variant_set.sh"]
-    S0 --> D0["prepare_delins.py"]
-    D0 --> VCF1["data/majorSet.fix_delins.vcf.gz"]
-
-    ALT["Homo_sapiens_assembly38.fasta.64.alt"] --> B1["get_sequences.py"]
-    UCSC1["UCSC REST API (gold track)"] --> B1
-    B1 --> CSV1["sequence.csv"]
-
-    CSV1 --> B2["check_anchor.py"]
-    NCBI["NCBI assembly data"] --> B2
-    B2 --> CSV2["sequence.isAnchor.csv"]
-
-    CSV2 --> B3["get_coord_onhg38.py"]
-    UCSC2["UCSC REST API"] --> B3
-    B3 --> CSV3["sequence.isAnchor.hg38pos.csv"]
-
-    CSV3 --> B4["extract_major.py"]
-    VCF1 --> B4
-    B4 --> VCF_ALT["majorSet.fix_delins.extract_anchor.vcf"]
-
-    VCF_ALT --> MERGE["bcftools concat"]
-    VCF1 --> MERGE
-    MERGE --> VCF_ALL["all_major_variants.vcf.gz"]
-
-    REF["GRCh38 Reference FASTA"] --> B5["bcftools consensus"]
-    VCF_ALL --> B5
-    B5 --> OUT["VGR.consensus.fasta"]
-```
-
-## Repository Structure
+## Workflow Overview
 
 ```text
-.
-├── data/
-│   └── majorSet.fix_delins.vcf.gz        # Curated Vietnamese major variant set
-├── Homo_sapiens_assembly38.fasta.64.alt   # ALT contig definitions
-├── generate_major_variant_set.sh         # Step 0: Cohort filtering and normalization
-├── prepare_delins.py                     # Step 0: InDel left-alignment and standardization
-├── get_sequences.py                      # Step 1: Query UCSC API for ALT tiling paths
-├── check_anchor.py                       # Step 2: Identify anchored contig segments
-├── get_coord_onhg38.py                   # Step 3: Map ALT segments to primary coordinates
-├── extract_major.py                      # Step 4: Remap major variants to ALT contigs
-├── build_consensus.sh                    # Step 5: Merge variants and build consensus FASTA
-├── run_pipeline.sh                       # End-to-end pipeline runner
-├── bwa-postalt.js                        # BWA postalt script for ALT-aware mapping
-└── README.md
+Population Cohort VCF (e.g., VN1K joint callset)
+   │
+   ▼ Step 0: generate_major_variant_set.sh & prepare_delins.py
+   │  - Filter PASS variants (GATK VQSR tranche)
+   │  - Split multiallelic sites & normalize indels (bcftools norm)
+   │  - Annotate AF & filter HWE (p > 3.4e-6)
+   │  - Retain major alleles (AF >= 0.50)
+   │  - Trim indels/delins & resolve overlapping variant collisions
+   │
+   ▼ Major variant set (data/majorSet.fix_delins.vcf.gz)
+   │
+   ├─────────────────────────────────────────────────┐
+   ▼ Primary chromosomes                             ▼ ALT contig projection (Steps 1–4)
+   Primary major variants                            - get_sequences.py (UCSC tiling path)
+   │                                                 - check_anchor.py (anchored contig check)
+   │                                                 - get_coord_onhg38.py (homologous coordinates)
+   │                                                 - extract_major.py (project to ALT contigs)
+   │                                                 │
+   │                                                 ▼
+   │                                                 Projected ALT major variants
+   │                                                 │
+   └────────────────────────┬────────────────────────┘
+                            ▼ Step 5: build_consensus.sh
+                            - Merge variant sets (bcftools concat)
+                            - Apply consensus alleles (bcftools consensus)
+                            - Index FASTA & link ALT indices (.fai, .dict, .alt)
+                            │
+                            ▼
+                    VGR.consensus.fasta
 ```
+
+---
 
 ## Requirements
 
-- Python 3.8+ with `pandas`, `requests`, `pysam`, `tqdm`
-- `bcftools` (v1.12+)
-- `samtools` (v1.12+)
+- Linux environment
+- Python >= 3.8 (`pandas`, `requests`, `pysam`, `tqdm`)
+- `bcftools` (>= 1.12)
+- `samtools` (>= 1.12)
 - `tabix` / `bgzip`
+- `k8` (optional, required if running `bwa-postalt.js`)
+
+Dependencies can be installed via Conda:
 
 ```bash
-conda create -n vgr python=3.10 pandas requests pysam tqdm bioconda::bcftools bioconda::samtools bioconda::tabix -y
+conda create -n vgr -c bioconda -c conda-forge python=3.10 pandas requests pysam tqdm bcftools samtools htslib -y
 conda activate vgr
 ```
 
-## Pipeline Guide
+---
+
+## Step-by-Step Guide
 
 ### Step 0: Prepare Population Major Variant Set (Optional)
 
-If starting from a raw joint-called cohort VCF:
-1. Filters PASS variants (VQSR tranche).
-2. Decomposes multiallelic sites and left-aligns indels (`bcftools norm`).
-3. Re-annotates allele frequencies and filters Hardy-Weinberg equilibrium ($p > 3.4 \times 10^{-6}$).
-4. Extracts major alleles with $\text{AF} \ge 0.50$.
-5. Standardizes indels/delins and resolves overlapping loci (`prepare_delins.py`).
+If starting from a raw joint-called cohort VCF (e.g. from GATK HaplotypeCaller):
 
 ```bash
 bash generate_major_variant_set.sh cohort.vcf.gz Homo_sapiens_assembly38.fasta data/
 ```
 
-Output: `data/majorSet.fix_delins.vcf.gz`
+This step executes the following operations:
+1. **Quality filtering**: Retains only `PASS` variants from VQSR (99.0% tranche).
+2. **Multiallelic decomposition & normalization**: Runs `bcftools norm -m -any -f reference.fasta` to decompose multiallelic variants into biallelic records and left-align indels against the reference genome.
+3. **Hardy-Weinberg Equilibrium (HWE) filtering**: Annotates AC, AN, AF, and HWE p-values (`bcftools plugin fill-tags`). Filters out sites with severe HWE deviation (p <= 3.4e-6) to remove potential genotype calling or sequencing artifacts.
+4. **Major allele selection**: Selects variants with allele frequency AF >= 0.50 (where the alternate allele is the majority in the target population).
+5. **InDel & DELINS standardization (`prepare_delins.py`)**:
+   - Trims shared prefix and suffix bases between REF and ALT alleles to ensure atomic representation.
+   - Sorts records by chromosome and coordinate.
+   - Resolves overlapping variant loci by retaining non-overlapping sites, preventing allele collision errors during `bcftools consensus`.
 
-*(Note: Precomputed Vietnamese major alleles are already provided in `data/majorSet.fix_delins.vcf.gz`.)*
+*Note: For the Vietnamese population reference, the processed major variant set is already provided at `data/majorSet.fix_delins.vcf.gz`.*
 
 ### Step 1: Query ALT Contig Tiling Paths
 
-Extracts ALT contigs and retrieves tiling path coordinates from UCSC Genome Browser API:
+Extracts ALT contigs from `Homo_sapiens_assembly38.fasta.64.alt` and queries the UCSC Genome Browser API (`gold` track) for fragment accessions and coordinates:
 
 ```bash
-python3 get_sequences.py --alt Homo_sapiens_assembly38.fasta.64.alt --output sequence.csv
+python3 get_sequences.py \
+    --alt Homo_sapiens_assembly38.fasta.64.alt \
+    --output sequence.csv
 ```
-
-Output: `sequence.csv`
 
 ### Step 2: Identify Anchored Contig Segments
 
-Cross-references ALT fragments against primary chromosome tiling tracks to distinguish anchored segments:
+Cross-references ALT fragment accessions against primary chromosome assembly tracks to identify anchored sequence segments:
 
 ```bash
-python3 check_anchor.py --input sequence.csv --output sequence.isAnchor.csv
+python3 check_anchor.py \
+    --input sequence.csv \
+    --output sequence.isAnchor.csv
 ```
 
-Output: `sequence.isAnchor.csv`
+### Step 3: Map ALT Segments to Primary GRCh38 Coordinates
 
-### Step 3: Map Coordinates to Primary Reference
-
-Computes homologous primary chromosome coordinate spans for each anchored segment:
+Computes homologous primary chromosome coordinate intervals (`anchor_hg38_start`, `anchor_hg38_end`) for each anchored ALT segment:
 
 ```bash
-python3 get_coord_onhg38.py --input sequence.isAnchor.csv --output sequence.isAnchor.hg38pos.csv
+python3 get_coord_onhg38.py \
+    --input sequence.isAnchor.csv \
+    --output sequence.isAnchor.hg38pos.csv
 ```
 
-Output: `sequence.isAnchor.hg38pos.csv`
+### Step 4: Project Primary Major Variants onto ALT Contigs
 
-### Step 4: Project Major Variants onto ALT Contigs
-
-Extracts primary chromosome major variants and projects their positions onto corresponding ALT contigs:
+Extracts primary chromosome major variants within the homologous anchored regions and translates their positions onto the respective ALT contig coordinates:
 
 ```bash
 python3 extract_major.py \
@@ -134,11 +123,9 @@ python3 extract_major.py \
     --output majorSet.fix_delins.extract_anchor.vcf
 ```
 
-Output: `majorSet.fix_delins.extract_anchor.vcf`
-
 ### Step 5: Build Final Consensus Genome
 
-Merges variants, applies them to the GRCh38 FASTA with `bcftools consensus`, and generates FASTA indices (`.fai`, `.dict`, `.alt`):
+Combines primary and ALT variants, applies them to the GRCh38 reference FASTA, and creates index files (`.fai`, `.dict`, `.alt`):
 
 ```bash
 bash build_consensus.sh \
@@ -148,21 +135,57 @@ bash build_consensus.sh \
     VGR.consensus.fasta
 ```
 
-Output: `VGR.consensus.fasta`
-
 ---
 
 ## One-Command Execution
 
-To run all steps in sequence:
+The complete workflow can also be executed with `run_pipeline.sh`:
 
 ```bash
 # Using precomputed major variants:
-bash run_pipeline.sh --ref Homo_sapiens_assembly38.fasta --output VGR.consensus.fasta
+bash run_pipeline.sh \
+    --ref Homo_sapiens_assembly38.fasta \
+    --output VGR.consensus.fasta
 
-# From raw cohort WGS VCF:
-bash run_pipeline.sh --cohort cohort.vcf.gz --ref Homo_sapiens_assembly38.fasta --output VGR.consensus.fasta
+# Starting from raw cohort VCF:
+bash run_pipeline.sh \
+    --cohort cohort.vcf.gz \
+    --ref Homo_sapiens_assembly38.fasta \
+    --output VGR.consensus.fasta
 ```
+
+---
+
+## Downstream Read Alignment (ALT-Aware BWA-MEM)
+
+To align short reads against the consensus reference with ALT-contig awareness:
+
+```bash
+# 1. Index consensus reference (if not already indexed)
+bwa index VGR.consensus.fasta
+
+# 2. Align reads and process ALT contigs with bwa-postalt.js
+bwa mem -t 16 -K 100000000 -Y VGR.consensus.fasta read_1.fastq.gz read_2.fastq.gz | \
+    k8 bwa-postalt.js -p Homo_sapiens_assembly38.fasta.64.alt > aligned.sam
+```
+
+---
+
+## Repository Files
+
+- `generate_major_variant_set.sh`: Shell pipeline for cohort filtering, HWE calculation, and major variant extraction.
+- `prepare_delins.py`: Normalizes InDels/DELINS and resolves overlapping variant positions.
+- `get_sequences.py`: Queries UCSC Genome Browser API for ALT contig tiling paths.
+- `check_anchor.py`: Identifies anchored ALT contig segments.
+- `get_coord_onhg38.py`: Maps ALT segments to homologous primary chromosome coordinates.
+- `extract_major.py`: Remaps primary major variants onto corresponding ALT contigs.
+- `build_consensus.sh`: Combines variant callsets and builds the consensus reference FASTA with indices.
+- `run_pipeline.sh`: End-to-end automated runner.
+- `bwa-postalt.js`: BWA-KIT post-processing script for ALT-aware read alignment.
+- `data/majorSet.fix_delins.vcf.gz`: Curated Vietnamese population major variant callset.
+- `Homo_sapiens_assembly38.fasta.64.alt`: Alternate contig definition file.
+
+---
 
 ## Citation
 
