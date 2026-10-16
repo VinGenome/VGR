@@ -140,3 +140,7 @@ extracted_fig/
 *.tbi
 *.fai
 *.dict
+GEMINI.md
+ucsc_hub/
+*.tex
+*.txt
