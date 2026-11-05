@@ -6,42 +6,6 @@ Standard human reference assemblies (such as GRCh38) carry alleles that may be m
 
 ---
 
-## Workflow Overview
-
-```text
-Population Cohort VCF (e.g., VN1K joint callset)
-   │
-   ▼ Step 0: generate_major_variant_set.sh & prepare_delins.py
-   │  - Filter PASS variants (GATK VQSR tranche)
-   │  - Split multiallelic sites & normalize indels (bcftools norm)
-   │  - Annotate AF & filter HWE (p > 3.4e-6)
-   │  - Retain major alleles (AF >= 0.50)
-   │  - Trim indels/delins & resolve overlapping variant collisions
-   │
-   ▼ Major variant set (data/majorSet.fix_delins.vcf.gz)
-   │
-   ├─────────────────────────────────────────────────┐
-   ▼ Primary chromosomes                             ▼ ALT contig projection (Steps 1–4)
-   Primary major variants                            - get_sequences.py (UCSC tiling path)
-   │                                                 - check_anchor.py (anchored contig check)
-   │                                                 - get_coord_onhg38.py (homologous coordinates)
-   │                                                 - extract_major.py (project to ALT contigs)
-   │                                                 │
-   │                                                 ▼
-   │                                                 Projected ALT major variants
-   │                                                 │
-   └────────────────────────┬────────────────────────┘
-                            ▼ Step 5: build_consensus.sh
-                            - Merge variant sets (bcftools concat)
-                            - Apply consensus alleles (bcftools consensus)
-                            - Index FASTA & link ALT indices (.fai, .dict, .alt)
-                            │
-                            ▼
-                    VGR.consensus.fasta
-```
-
----
-
 ## Requirements
 
 - Linux environment
